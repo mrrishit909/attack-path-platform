@@ -1,0 +1,218 @@
+{
+ "service": "attack-path-platform",
+ "run": "demo-1",
+ "tokens": {
+  "admin": "acme-admin-demo",
+  "analyst": "acme-analyst-demo"
+ },
+ "steps": [
+  {
+   "title": "Ingest AWS, Azure and Entra snapshots",
+   "say": "Three read-only collectors are registered and a sync job runs: collect, normalize into one model, write the graph, search for attack paths to every crown-jewel data store.",
+   "calls": [
+    {
+     "key": "int_aws",
+     "as": "admin",
+     "method": "POST",
+     "path": "/v1/integrations",
+     "body": {
+      "provider": "aws",
+      "credentials": {
+       "simulator": {
+        "scale": 1.0,
+        "seed": 11
+       }
+      }
+     }
+    },
+    {
+     "key": "int_azure",
+     "as": "admin",
+     "method": "POST",
+     "path": "/v1/integrations",
+     "body": {
+      "provider": "azure",
+      "credentials": {
+       "simulator": {
+        "scale": 1.0,
+        "seed": 11
+       }
+      }
+     }
+    },
+    {
+     "key": "int_entra",
+     "as": "admin",
+     "method": "POST",
+     "path": "/v1/integrations",
+     "body": {
+      "provider": "entra",
+      "credentials": {
+       "simulator": {
+        "scale": 1.0,
+        "seed": 11
+       }
+      }
+     }
+    },
+    {
+     "key": "sync",
+     "as": "admin",
+     "method": "POST",
+     "path": "/v1/syncs"
+    }
+   ]
+  },
+  {
+   "title": "Open the production orders database",
+   "say": "A criticality-5 database. No finding on the database itself looks alarming; the question is what can reach it. Here are the three most likely routes from the internet.",
+   "calls": [
+    {
+     "key": "found",
+     "as": "analyst",
+     "method": "GET",
+     "path": "/v1/assets?name=orders-db"
+    },
+    {
+     "key": "asset",
+     "as": "analyst",
+     "method": "GET",
+     "path": "/v1/assets/{{found.items.0.id}}"
+    },
+    {
+     "key": "paths",
+     "as": "analyst",
+     "method": "GET",
+     "path": "/v1/attack-paths?target={{found.items.0.id}}&limit=3"
+    }
+   ]
+  },
+  {
+   "title": "Explain one path",
+   "say": "The top path, step by step: public workload, exploitable CVE, the workload's identity, a role it may assume, a secret that role can read, the database. Then two questions in plain words, answered only from graph edges.",
+   "calls": [
+    {
+     "key": "q1",
+     "as": "analyst",
+     "method": "POST",
+     "path": "/v1/query",
+     "body": {
+      "question": "Which identities can reach orders-db?"
+     }
+    },
+    {
+     "key": "q2",
+     "as": "analyst",
+     "method": "POST",
+     "path": "/v1/query",
+     "body": {
+      "question": "What can jump-host reach?"
+     }
+    }
+   ]
+  },
+  {
+   "title": "Simulate two fixes",
+   "say": "Ask the optimizer for the best two changes for this database. It removes them from a copy of the graph and searches again, so the answer is verified, not estimated.",
+   "calls": [
+    {
+     "key": "sim",
+     "as": "analyst",
+     "method": "POST",
+     "path": "/v1/simulations",
+     "body": {
+      "budget": 2,
+      "target": "{{found.items.0.id}}"
+     }
+    }
+   ]
+  },
+  {
+   "title": "Two fixes against the whole estate",
+   "say": "The same two changes measured across all crown jewels, and what eight fixes buy when chosen by attack path instead of by severity score.",
+   "calls": [
+    {
+     "key": "sim_estate",
+     "as": "analyst",
+     "method": "POST",
+     "path": "/v1/simulations",
+     "body": {
+      "remediations": [
+       "{{sim.chosen.0.ref}}",
+       "{{sim.chosen.1.ref}}"
+      ]
+     }
+    },
+    {
+     "key": "sim8",
+     "as": "analyst",
+     "method": "POST",
+     "path": "/v1/simulations",
+     "body": {
+      "budget": 8
+     }
+    },
+    {
+     "key": "backlog",
+     "as": "analyst",
+     "method": "GET",
+     "path": "/v1/remediations"
+    }
+   ]
+  },
+  {
+   "title": "Ticket, fix, and prove it",
+   "say": "A ticket with the path evidence goes to the owning team. Once both fixes are marked done, the next collection produces a new snapshot and the paths show up as removed.",
+   "calls": [
+    {
+     "key": "rem1",
+     "as": "admin",
+     "method": "GET",
+     "path": "/v1/remediations?ref={{sim.chosen.0.ref}}"
+    },
+    {
+     "key": "rem2",
+     "as": "admin",
+     "method": "GET",
+     "path": "/v1/remediations?ref={{sim.chosen.1.ref}}"
+    },
+    {
+     "key": "ticket",
+     "as": "admin",
+     "method": "POST",
+     "path": "/v1/remediations/{{rem1.items.0.id}}/ticket"
+    },
+    {
+     "key": "done1",
+     "as": "admin",
+     "method": "POST",
+     "path": "/v1/remediations/{{rem1.items.0.id}}:complete"
+    },
+    {
+     "key": "done2",
+     "as": "admin",
+     "method": "POST",
+     "path": "/v1/remediations/{{rem2.items.0.id}}:complete"
+    },
+    {
+     "key": "sync2",
+     "as": "admin",
+     "method": "POST",
+     "path": "/v1/syncs"
+    },
+    {
+     "key": "changes",
+     "as": "analyst",
+     "method": "GET",
+     "path": "/v1/changes"
+    },
+    {
+     "key": "audit",
+     "as": "admin",
+     "method": "GET",
+     "path": "/v1/audit?limit=10"
+    }
+   ]
+  }
+ ]
+}

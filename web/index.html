@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attack-Path &amp; Exposure Management</title>
+<link rel="stylesheet" href="kit.css">
+<style>
+.chain { display:flex; flex-wrap:wrap; align-items:stretch; gap:0; margin:8px 0 4px; }
+.node { border:1px solid var(--line); border-radius:8px; padding:7px 10px; background:var(--panel); min-width:104px; max-width:170px; }
+.node b { display:block; font-size:12.5px; word-break:break-word; } .node span { font:10.5px var(--mono); color:var(--mute); }
+.node.internet { border-color:var(--bad); } .node.datastore { border-color:var(--warn); background:#241d0f; } .node.identity { border-color:#2f447a; }
+.hop { display:flex; flex-direction:column; justify-content:center; padding:0 7px; font:10px var(--mono); color:var(--mute); text-align:center; min-width:92px; }
+.hop i { font-style:normal; color:var(--accent); font-size:14px; line-height:1; } .hop.cut { color:var(--bad); } .hop.cut i { color:var(--bad); }
+.pathhead { display:flex; gap:10px; align-items:baseline; margin-top:12px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Attack-Path &amp; Exposure Management</h1>
+  <span class="sub">A synthetic multi-cloud estate. Which findings combine into a route to the data that matters?</span>
+  <span class="mode">…</span>
+  <button class="primary" id="runall">Run all steps</button>
+</header>
+<main>
+  <nav class="steps"></nav>
+  <div>
+    <div id="steps"></div>
+    <section class="step" id="roi"><div class="head"><div class="grow"><h2>What is it worth?</h2>
+      <p>Counts come from the estate above (run step 5 first). Hours and rates are assumptions: change them.</p></div></div>
+      <div class="out"><div class="card roi" id="roibox"><span class="mute">Run step 5 to load the figures.</span></div></div></section>
+  </div>
+</main>
+<footer>Everything shown is synthetic: invented assets, identities and CVE ids. Step probabilities are stated priors, not fitted to incident data.</footer>
+<script src="kit.js"></script>
+<script>
+const kindOf = n => n.type === 'internet' ? 'internet' : n.type === 'datastore' ? 'datastore' : ['role', 'user', 'group', 'service_principal'].includes(n.type) ? 'identity' : '';
+const chain = (p, cut = []) => `<div class="pathhead">${badge('risk ' + fmt.n(p.risk_score, 1), p.risk_score > 40 ? 'bad' : 'warn')}<span class="small mute">probability ${fmt.pct(p.probability, 1)} · ${p.hops} steps · ${esc(p.techniques.join(' '))}</span></div>
+  <div class="chain">${p.nodes.map((n, i) => `<div class="node ${kindOf(n)}"><b>${esc(n.name)}</b><span>${esc(n.type)} · ${esc(n.provider)}</span></div>` +
+    (p.edges[i] ? `<div class="hop ${cut.includes(p.edges[i].remediation) ? 'cut' : ''}"><span>${esc(p.edges[i].type)}</span><i>${cut.includes(p.edges[i].remediation) ? '✕' : '→'}</i><span>p ${fmt.n(p.edges[i].p, 2)}</span></div>` : '')).join('')}</div>`;
+const fixes = list => table([{ k: 'type', label: 'Kind', f: t => badge(t.replace(/_/g, ' '), t === 'patch_vulnerability' ? 'warn' : 'info') }, { k: 'title', label: 'Change' }, { k: 'owner', label: 'Owner' }], list);
+const simCard = (s, title) => card(title, kpis([
+    { label: 'Risk before', value: fmt.n(s.risk_before, 1), sub: s.paths_before + ' paths · ' + s.scope }, { label: 'Risk after', value: fmt.n(s.risk_after, 1), sub: s.paths_after + ' paths remain' },
+    { label: 'Reduction', value: `<span style="color:var(--good)">${fmt.n(s.risk_reduction_pct, 1)}%</span>`, sub: s.chosen.length + ' fixes · ' + s.mode },
+    { label: 'Same effort, by CVSS', value: `<span style="color:var(--bad)">${fmt.n(s.baseline.risk_reduction_pct, 1)}%</span>`, sub: s.baseline.name }])
+  + fixes(s.chosen) + `<div class="small mute" style="margin-top:8px">Verified by searching the changed graph again: ${s.compute_ms} ms.</div>`);
+const qa = q => card('Q: ' + q.question, `<p style="margin:0 0 8px">${esc(q.answer)}</p>` + table([{ k: 'src', label: 'From' }, { k: 'type', label: 'Edge', f: t => `<span class="mono">${esc(t)}</span>` }, { k: 'dst', label: 'To' }, { k: 'detail', label: 'Detail' }], q.facts.slice(0, 8))
+  + `<div class="small mute" style="margin-top:6px">${esc(q.parser)}: every statement above is an edge in this tenant's graph.</div>`);
+const snap = (j, title) => { const s = j.result; return card(title, kpis([
+    { label: 'Assets', value: fmt.n(s.nodes.workload + s.nodes.datastore + s.nodes.secret), sub: `${fmt.n(s.nodes.workload)} workloads` },
+    { label: 'Identities', value: fmt.n(s.nodes.user + s.nodes.role + s.nodes.group + s.nodes.service_principal), sub: `${fmt.n(s.nodes.user)} users` },
+    { label: 'Relationships', value: fmt.n(s.relationships) }, { label: 'Open findings', value: fmt.n(s.open_findings), sub: s.kev_findings + ' known-exploited' },
+    { label: 'Crown jewels exposed', value: `${s.crown_jewels_exposed} / ${s.crown_jewels}` }, { label: 'Attack paths', value: s.attack_paths, sub: 'mean risk ' + s.mean_path_risk },
+    { label: 'Risk index', value: fmt.n(s.risk_index, 1) }])
+  + `<div class="small mute">Job ${esc(j.status)} in ${j.attempts} attempt · collect + normalize ${s.timings_ms.collect_normalize} ms · write + reload ${s.timings_ms.write_and_reload} ms · search + optimize ${s.timings_ms.search_and_optimize} ms · engine ${esc(s.engine)}</div>`); };
+const R = {
+  int_entra: (x, r) => card('Integrations', table([{ k: 'provider', label: 'Source' }, { k: 'mode', label: 'Mode' }], [r.int_aws, r.int_azure, r.int_entra])),
+  sync: j => snap(j, 'Snapshot 1') + card('Crown-jewel data stores, by risk', table([{ k: 'name', label: 'Data store' }, { k: 'provider', label: 'Cloud' }, { k: 'owner', label: 'Owner' },
+    { k: 'paths', label: 'Paths', num: 1 }, { k: 'risk', label: 'Risk', num: 1, f: v => v ? `<b>${fmt.n(v, 1)}</b>` : '<span class="mute">0</span>' }], j.result.targets.slice(0, 9))),
+  asset: a => kpis([{ label: 'Asset', value: esc(a.name), sub: a.external_id.slice(0, 44) }, { label: 'Criticality', value: a.criticality + ' / 5' }, { label: 'Owner', value: esc(a.attributes.owner) },
+    { label: 'Findings on the asset itself', value: a.vulnerabilities.length }, { label: 'Reachable from internet', value: a.exposure.reachable_from_internet ? badge('yes', 'bad') : badge('no', 'good'), sub: a.exposure.attack_paths + ' paths' },
+    { label: 'Risk', value: fmt.n(a.exposure.risk, 1) }]),
+  paths: p => card(`Top 3 of ${p.total} attack paths · ${p.engine}`, p.paths.map(x => chain(x)).join('')),
+  q1: (q, r) => card('The top path, step by step', table([{ k: 'n', label: '#', num: 1 }, { k: 'from', label: 'From' }, { k: 'type', label: 'Step', f: t => `<span class="mono">${esc(t)}</span>` }, { k: 'to', label: 'To' },
+      { k: 'technique', label: 'MITRE ATT&CK' }, { k: 'detail', label: 'Why it works' }, { k: 'p', label: 'p', num: 1, f: v => fmt.n(v, 2) }],
+      r.paths.paths[0].edges.map((e, i) => ({ n: i + 1, from: r.paths.paths[0].nodes[i].name, to: r.paths.paths[0].nodes[i + 1].name, ...e })))) + qa(q),
+  q2: qa,
+  sim: (s, r) => simCard(s, 'Best two fixes for orders-db') + card('The same three paths with those two changes', r.paths.paths.map(x => chain(x, s.chosen.map(c => c.ref))).join('')
+    + (s.remaining_paths.length ? `<div class="small mute">Still open: ${s.remaining_paths.map(p => esc(p.nodes.map(n => n.name).join(' > '))).join('; ')}</div>` : '')),
+  sim_estate: s => simCard(s, 'Those two fixes, measured across all crown jewels'),
+  sim8: s => simCard(s, 'Eight fixes chosen by the optimizer'),
+  backlog: b => card('Remediation backlog (verified risk reduction)', table([{ k: 'detail', label: 'Change', f: d => esc(d.title) }, { k: 'detail', label: 'Owner', f: d => esc(d.owner) },
+    { k: 'estimated_effort', label: 'Effort' }, { k: 'detail', label: 'Paths cut', num: 1, f: d => d.paths_cut }, { k: 'risk_reduction', label: 'Risk removed', num: 1, f: v => fmt.n(v, 1) }], b.items.slice(0, 8))),
+  ticket: t => card(`${t.ticket} · ${t.priority} · owner ${t.owner} · effort ${t.effort}`, `<b>${esc(t.title)}</b><pre class="doc" style="margin-top:8px">${esc(t.body)}</pre>`),
+  sync2: j => snap(j, 'Snapshot 2, after both fixes were marked done'),
+  changes: c => card(`Changes between snapshots: risk index ${fmt.n(c.from.risk_index, 1)} → ${fmt.n(c.to.risk_index, 1)}`, table([{ k: 'risk_score', label: 'Risk', num: 1, f: v => fmt.n(v, 1) }, { k: 'target', label: 'Target' },
+    { k: 'route', label: 'Path removed' }], c.removed) + `<div class="small mute" style="margin-top:6px">${c.added.length} new paths appeared.</div>`),
+  audit: a => card(`Audit log · hash chain ${a.chain_valid ? 'verifies' : 'BROKEN'}`, table([{ k: 'at', label: 'When', f: fmt.time }, { k: 'action', label: 'Action', f: v => `<span class="mono">${esc(v)}</span>` },
+    { k: 'detail', label: 'Detail', f: d => `<span class="small">${esc(Object.entries(d).map(([k, v]) => `${k}: ${v}`).join(' · ').slice(0, 120))}</span>` }], a.events.slice().reverse())),
+  _after: (i, r) => { if (r.sim8 && !document.querySelector('#r_h')) roi(r); },
+};
+function roi(r) {
+  const s = r.sync.result, n = r.sim8.chosen.length, box = document.querySelector('#roibox');
+  box.innerHTML = `<div class="grid2"><div>
+    <label>Open findings in the estate <input type="number" id="r_f" value="${s.open_findings}"></label>
+    <label>Fixes that remove ${fmt.n(r.sim8.risk_reduction_pct, 0)}% of crown-jewel risk <input type="number" id="r_n" value="${n}"></label>
+    <label>Engineer hours per fix (assumption) <input type="number" id="r_h" value="5"></label>
+    <label>Loaded cost per hour, $ (assumption) <input type="number" id="r_w" value="95"></label>
+    <label>Fixes the team completes per month (assumption) <input type="number" id="r_c" value="120"></label></div><div id="r_out"></div></div>`;
+  const calc = () => { const g = id => +document.querySelector(id).value;
+    document.querySelector('#r_out').innerHTML = kpis([{ label: 'Cost of the path-first fixes', value: fmt.usd(g('#r_n') * g('#r_h') * g('#r_w')), sub: 'done in the first month' },
+      { label: 'Months to patch everything instead', value: fmt.n(g('#r_f') / g('#r_c'), 1), sub: fmt.usd(g('#r_f') * g('#r_h') * g('#r_w')) + ' of engineer time' },
+      { label: 'Risk removed by 8 CVSS-first patches', value: fmt.n(r.sim8.baseline.risk_reduction_pct, 1) + '%', sub: 'measured above' }]); };
+  box.oninput = calc; calc();
+}
+const demo = new Demo(R); demo.init();
+</script>
+</body>
+</html>
